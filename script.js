@@ -57,7 +57,17 @@ function saveGame(){
 function loadGame(){
  const raw=localStorage.getItem(SAVE_KEY);
  if(!raw)return false;
- try{game=JSON.parse(raw);return true}catch(e){return false}
+ try{
+  game=JSON.parse(raw);
+  // Migração da V1: os valores antigos estavam baixos demais.
+  game.clubs.forEach(cl=>cl.players.forEach(p=>{
+   const ageFactor=p.age<21?1.45:p.age<25?1.30:p.age<29?1.05:p.age<32?.82:.62;
+   const potentialFactor=1+Math.max(0,p.potential-p.overall)*.035;
+   p.value=Math.max(450000,Math.round(Math.pow(p.overall,3)*35*ageFactor*potentialFactor));
+   p.salary=Math.max(5000,Math.round(Math.pow(p.overall,2)*6.2+500));
+  }));
+  return true;
+ }catch(e){return false}
 }
 function addNews(text){game.news.unshift({id:makeId("n"),text,date:new Date().toLocaleDateString("pt-BR")});game.news=game.news.slice(0,20)}
 function toast(msg){
@@ -207,12 +217,23 @@ function makeSub(){
 function renderMatch(s){
  const c=club(),fx=match.fixture,opp=team(fx.home===c.id?fx.away:fx.home);
  const home=fx.home===c.id?c:opp,away=fx.away===c.id?c:opp;
+ const ballX=18+((match.minute*7)%64), ballY=28+Math.sin(match.minute/6)*18;
+ const homeDots=renderMatchPlayers(home,true),awayDots=renderMatchPlayers(away,false);
  s.innerHTML=`<div class="tabs"><button class="btn" onclick="if(confirm('Sair da partida? O jogo será encerrado.')){clearInterval(matchTimer);go('dashboard')}">← Sair</button></div>
- <div class="card match-score"><div class="muted">RODADA ${fx.round} · ${match.minute}'</div><div class="match-teams"><div class="match-team">${logo(home)}${esc(home.name)}</div><div class="score">${match.homeScore} - ${match.awayScore}</div><div class="match-team">${logo(away)}${esc(away.name)}</div></div></div>
- <div class="card" style="margin-top:12px"><h3>🎮 Estratégia</h3><div class="tactics">${[["ATACAR","⚔️"],["EQUILIBRADO","⚖️"],["DEFENDER","🛡️"],["PRESSAO","🔥"],["CONTRA","🏃"]].map(([x,i])=>`<button class="btn tactic ${match.tactic===x?"active":""}" onclick="setTactic('${x}')">${i} ${x}</button>`).join("")}</div>
+ <div class="match-layout"><div class="card match-main"><div class="match-score"><div class="match-meta"><span>RODADA ${fx.round}</span><b>${match.minute}'</b><span>${match.tactic}</span></div>
+ <div class="match-teams"><div class="match-team">${logo(home)}<b>${esc(home.name)}</b></div><div class="score">${match.homeScore} <span>–</span> ${match.awayScore}</div><div class="match-team">${logo(away)}<b>${esc(away.name)}</b></div></div></div>
+ <div class="live-pitch"><div class="pitch-lines"></div><div class="center-circle"></div><div class="center-spot"></div><div class="penalty-box left"></div><div class="penalty-box right"></div><div class="goal left"></div><div class="goal right"></div>${homeDots}${awayDots}<div class="match-ball" style="left:${ballX}%;top:${ballY}%">⚽</div></div>
+ <div class="tactics match-tactics">${[["ATACAR","⚔️"],["EQUILIBRADO","⚖️"],["DEFENDER","🛡️"],["PRESSAO","🔥"],["CONTRA","🏃"]].map(([x,i])=>`<button class="btn tactic ${match.tactic===x?"active":""}" onclick="setTactic('${x}')">${i} ${x}</button>`).join("")}</div>
  <div class="actions" style="margin-top:10px"><button class="btn blue" onclick="makeSub()">🔄 SUBSTITUIÇÃO (${5-match.substitutions})</button><button class="btn" onclick="saveGame()">💾 SALVAR</button></div></div>
- <div class="card" style="margin-top:12px"><h3>📣 Eventos</h3><div class="match-events">${match.events.slice(0,60).map(e=>`<div class="event"><span class="minute">${e.m}'</span>${e.t} ${esc(e.text)}</div>`).join("")||"<div class='empty'>A bola rolou...</div>"}</div></div>`;
+ <div class="card match-feed"><h3>📣 Narração</h3><div class="match-events">${match.events.slice(0,60).map(e=>`<div class="event"><span class="minute">${e.m}'</span>${e.t} ${esc(e.text)}</div>`).join("")||"<div class='empty'>A bola rolou...</div>"}</div></div></div>`;
 }
+function renderMatchPlayers(t,isHome){
+ const c=club(),source=t.id===c.id?game.lineup.map(id=>c.players.find(p=>p.id===id)).filter(Boolean):t.players.slice().sort((a,b)=>b.overall-a.overall).slice(0,11);
+ const positions=isHome?[[9,50],[22,25],[22,42],[22,58],[22,75],[42,20],[42,40],[42,60],[42,80],[64,38],[64,62]]:[[91,50],[78,25],[78,42],[78,58],[78,75],[58,20],[58,40],[58,60],[58,80],[36,38],[36,62]];
+ return source.slice(0,11).map((p,i)=>matchPlayerDot(p,positions[i],isHome)).join("");
+}
+function matchPlayerDot(p,pos,isHome){return `<div class="match-player ${isHome?"home-player":"away-player"}" style="left:${pos[0]}%;top:${pos[1]}%" title="${esc(p.name)}"><span>${p.number}</span><small>${esc(p.name.split(" ")[0].slice(0,7))}</small></div>`;}
+
 function finishMatch(){
  if(!match||match.ended)return;match.ended=true;clearInterval(matchTimer);
  const c=club(),fx=match.fixture,opp=team(fx.home===c.id?fx.away:fx.home), hs=match.homeScore,as=match.awayScore;
@@ -234,36 +255,48 @@ function endSeason(){
  const champion=standings[0];if(champion.id===c.id){game.coach.titles++;c.money+=5000000;addNews(`🏆 ${c.name} conquistou o título da temporada ${game.season}!`)}
  else addNews(`Temporada encerrada. ${c.name} terminou em ${pos}º lugar.`);
  // recuperação + evolução
- game.clubs.forEach(cl=>cl.players.forEach(p=>{p.energy=100;p.contract=Math.max(0,p.contract-1);if(p.age<25)p.overall=Math.min(p.potential,p.overall+(Math.random()<.7?rand(0,2):0));if(p.age>=31)p.overall=Math.max(40,p.overall-(Math.random()<.6?1:0));p.value=Math.max(150000,Math.round(p.overall*p.overall*850*(p.age<24?1.35:p.age>30?.7:1)))}));
+ game.clubs.forEach(cl=>cl.players.forEach(p=>{p.energy=100;p.contract=Math.max(0,p.contract-1);if(p.age<25)p.overall=Math.min(p.potential,p.overall+(Math.random()<.7?rand(0,2):0));if(p.age>=31)p.overall=Math.max(40,p.overall-(Math.random()<.6?1:0));(()=>{const ageFactor=p.age<21?1.45:p.age<25?1.30:p.age<29?1.05:p.age<32?.82:.62;const potentialFactor=1+Math.max(0,p.potential-p.overall)*.035;p.value=Math.max(450000,Math.round(Math.pow(p.overall,3)*35*ageFactor*potentialFactor));})()}));
  game.season++;setupSeason();autoLineup();saveGame();
  alert(`FIM DA TEMPORADA!\n${c.name}: ${pos}º lugar.\nNova temporada: ${game.season}`);
  go("dashboard");
 }
 function renderTransfers(s){
- const c=club(), others=game.clubs.filter(x=>x.id!==c.id), pool=others.flatMap(x=>x.players.map(p=>({...p,clubId:x.id})));
- s.innerHTML=nav()+`<div class="section-title"><div><h2>🔄 Mercado</h2><p class="muted">Compre jogadores de outros clubes ou venda os seus.</p></div></div>
+ const c=club();
+ s.innerHTML=nav()+`<div class="section-title"><div><h2>🔄 Mercado</h2><p class="muted">Nenhum jogador chega sem uma proposta aceita. Valores e interesse variam conforme o mercado.</p></div></div>
  <div class="card"><div class="grid grid-4"><div class="field"><label>Posição</label><select id="filter-pos"><option value="">Todas</option>${POSITIONS.map(x=>`<option>${x}</option>`).join("")}</select></div><div class="field"><label>Overall mínimo</label><input id="filter-ovr" type="number" value="0" min="0" max="99"></div><div class="field"><label>Idade máxima</label><input id="filter-age" type="number" value="40" min="15" max="50"></div><div class="field"><label>Busca</label><input id="filter-name" placeholder="Nome"></div></div><button class="btn primary" style="margin-top:10px" onclick="renderMarket()">FILTRAR</button></div>
- <div id="market-list" style="margin-top:14px"></div>
- <div class="card" style="margin-top:14px"><h3>📤 Vender jogador</h3><div class="grid grid-3">${c.players.map(p=>`<div class="card"><b>${esc(p.name)}</b><div class="muted">${p.position} · ${p.overall} OVR</div><div>${fmtMoney(p.value)}</div><button class="btn danger" style="margin-top:8px" onclick="sellPlayer('${p.id}')">VENDER</button></div>`).join("")}</div></div>`;
- renderMarket();
+ <div id="market-list" style="margin-top:14px"></div><div class="card" style="margin-top:14px"><h3>📤 Vender jogador</h3><div class="grid grid-3">${c.players.map(p=>`<div class="card"><b>${esc(p.name)}</b><div class="muted">${p.position} · ${p.overall} OVR</div><div>${fmtMoney(p.value)}</div><button class="btn danger" style="margin-top:8px" onclick="sellPlayer('${p.id}')">COLOCAR À VENDA</button></div>`).join("")}</div></div>`; renderMarket();
 }
 function renderMarket(){
- const c=club(), pos=$("#filter-pos")?.value||"",ovr=+($("#filter-ovr")?.value||0),age=+($("#filter-age")?.value||40),name=($("#filter-name")?.value||"").toLowerCase();
+ const c=club(),pos=$("#filter-pos")?.value||"",ovr=+( $("#filter-ovr")?.value||0),age=+( $("#filter-age")?.value||40),name=($("#filter-name")?.value||"").toLowerCase();
  const pool=game.clubs.filter(x=>x.id!==c.id).flatMap(x=>x.players.map(p=>({...p,clubId:x.id}))).filter(p=>(!pos||p.position===pos)&&p.overall>=ovr&&p.age<=age&&p.name.toLowerCase().includes(name)).sort((a,b)=>b.overall-a.overall).slice(0,30);
- $("#market-list").innerHTML=`<div class="card"><h3>🌍 Jogadores disponíveis</h3><table><thead><tr><th>Jogador</th><th>POS</th><th>OVR</th><th>Idade</th><th>Clube</th><th>Valor</th><th></th></tr></thead><tbody>${pool.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td>${p.position}</td><td>${p.overall}</td><td>${p.age}</td><td>${esc(teamName(p.clubId))}</td><td>${fmtMoney(p.value)}</td><td><button class="btn primary" onclick="buyPlayer('${p.clubId}','${p.id}')">OFERTAR</button></td></tr>`).join("")||`<tr><td colspan="7" class="empty">Nenhum jogador encontrado.</td></tr>`}</tbody></table></div>`;
+ $("#market-list").innerHTML=`<div class="card"><h3>🌍 Jogadores disponíveis</h3><table><thead><tr><th>Jogador</th><th>POS</th><th>OVR</th><th>Idade</th><th>Clube</th><th>Valor</th><th></th></tr></thead><tbody>${pool.map(p=>`<tr><td><b>${esc(p.name)}</b><br><span class="muted small">${p.nation}</span></td><td>${p.position}</td><td><b>${p.overall}</b></td><td>${p.age}</td><td>${esc(teamName(p.clubId))}</td><td>${fmtMoney(p.value)}</td><td><button class="btn primary" onclick="openNegotiation('${p.clubId}','${p.id}')">NEGOCIAR</button></td></tr>`).join("")||`<tr><td colspan="7" class="empty">Nenhum jogador encontrado.</td></tr>`}</tbody></table></div>`;
 }
-function buyPlayer(fromId,pid){
- const buyer=club(),seller=team(fromId),p=seller.players.find(x=>x.id===pid);if(!p)return;
- const offer=Math.round(p.value*rand(90,115)/100);
- if(buyer.money<offer){toast("Dinheiro insuficiente.");return}
- const ok=Math.random()<.72+(buyer.strength>seller.strength?.05:0);
- if(!ok){alert("O clube recusou a proposta.");return}
- buyer.money-=offer;seller.money+=offer;buyer.players.push(p);seller.players=seller.players.filter(x=>x.id!==pid);p.contract=4;p.morale=85;
- game.transactions.push({type:"Compra",player:p.name,value:offer,season:game.season});addNews(`${buyer.name} contratou ${p.name} por ${fmtMoney(offer)}.`);saveGame();renderTransfers($("#screen"));
+function marketInterest(buyer,seller,p){return Math.max(12,Math.min(92,58+(buyer.strength-seller.strength)*.9+(buyer.money>p.value*2?8:0)-(p.overall>buyer.strength+7?18:0)));}
+function openNegotiation(fromId,pid){
+ const seller=team(fromId),p=seller.players.find(x=>x.id===pid),buyer=club();if(!p)return;
+ const min=Math.round(p.value*.92),interest=Math.round(marketInterest(buyer,seller,p));
+ const backdrop=document.createElement("div");backdrop.className="modal-backdrop";backdrop.id="negotiation-modal";
+ backdrop.innerHTML=`<div class="modal"><div class="section-title"><div><h2>🤝 Negociação</h2><p class="muted">${esc(seller.name)} · ${esc(p.name)}</p></div><button class="btn" onclick="closeNegotiation()">✕</button></div><div class="grid grid-3"><div class="card"><small>OVR</small><strong>${p.overall}</strong></div><div class="card"><small>Valor de mercado</small><strong>${fmtMoney(p.value)}</strong></div><div class="card"><small>Interesse</small><strong>${interest}%</strong></div></div><div class="card" style="margin-top:12px"><p><b>${esc(p.name)}</b> recebe ${fmtMoney(p.salary)} por temporada.</p><p class="muted small">Ofertas baixas podem ser recusadas ou gerar contraproposta. Jogadores muito acima do nível do seu clube podem não querer negociar.</p><div class="field"><label>Oferta pelo jogador</label><input id="offer-value" type="number" value="${min}" min="100000" step="100000"></div><div class="field" style="margin-top:10px"><label>Salário oferecido</label><input id="offer-salary" type="number" value="${p.salary}" min="100" step="100"></div><div class="actions" style="margin-top:12px"><button class="btn primary" onclick="submitNegotiation('${fromId}','${pid}')">ENVIAR PROPOSTA</button></div></div></div>`;
+ document.body.appendChild(backdrop);
+}
+function closeNegotiation(){$("#negotiation-modal")?.remove()}
+function submitNegotiation(fromId,pid){
+ const seller=team(fromId),buyer=club(),p=seller.players.find(x=>x.id===pid);if(!p)return;
+ const offer=+$("#offer-value").value,salary=+$("#offer-salary").value,interest=marketInterest(buyer,seller,p);if(!Number.isFinite(offer)||!Number.isFinite(salary)||offer<=0){toast("Preencha uma oferta válida.");return}if(buyer.money<offer){toast("Seu caixa não suporta essa proposta.");return}
+ if(interest<28){closeNegotiation();alert(`${p.name} não tem interesse em se transferir para ${buyer.name} neste momento.`);return}
+ const minimum=Math.round(p.value*(p.overall>=buyer.strength+5?1.10:.90)),salaryMinimum=Math.round(p.salary*(p.overall>buyer.strength+6?1.20:.92));
+ if(offer>=minimum&&salary>=salaryMinimum){completeTransfer(fromId,pid,offer,salary);return}
+ const counter=Math.round(Math.max(minimum,offer*1.16)),counterSalary=Math.round(Math.max(salaryMinimum,salary*1.08));closeNegotiation();
+ if(confirm(`${seller.name} fez uma contraproposta:\n\n💰 ${fmtMoney(counter)}\n💵 Salário: ${fmtMoney(counterSalary)}\n\nDeseja aceitar?`)){if(buyer.money<counter){alert("Você não tem dinheiro suficiente.");return}completeTransfer(fromId,pid,counter,counterSalary)}else toast("Negociação encerrada.");
+}
+function completeTransfer(fromId,pid,fee,salary){
+ const buyer=club(),seller=team(fromId),p=seller.players.find(x=>x.id===pid);if(!p||buyer.money<fee)return;
+ buyer.money-=fee;seller.money+=fee;seller.players=seller.players.filter(x=>x.id!==pid);p.contract=4;p.salary=salary;p.morale=82;p.energy=100;buyer.players.push(p);game.transactions.push({type:"Compra",player:p.name,value:fee,season:game.season});addNews(`${buyer.name} fechou a contratação de ${p.name} por ${fmtMoney(fee)}.`);autoLineup();saveGame();closeNegotiation();renderTransfers($("#screen"));toast("CONTRATAÇÃO CONCLUÍDA");
 }
 function sellPlayer(pid){
- const c=club();if(c.players.length<=15){toast("Mantenha pelo menos 15 jogadores.");return}
- const p=c.players.find(x=>x.id===pid);if(!p)return;const value=Math.round(p.value*rand(75,105)/100);c.money+=value;c.players=c.players.filter(x=>x.id!==pid);game.lineup=game.lineup.filter(id=>id!==pid);game.transactions.push({type:"Venda",player:p.name,value,season:game.season});addNews(`${c.name} vendeu ${p.name} por ${fmtMoney(value)}.`);autoLineup();saveGame();renderTransfers($("#screen"))}
+ const c=club();if(c.players.length<=15){toast("Mantenha pelo menos 15 jogadores.");return}const p=c.players.find(x=>x.id===pid);if(!p)return;const offer=Math.round(p.value*rand(72,100)/100);if(!confirm(`Colocar ${p.name} à venda por cerca de ${fmtMoney(offer)}?`))return;c.money+=offer;c.players=c.players.filter(x=>x.id!==pid);game.lineup=game.lineup.filter(id=>id!==pid);game.transactions.push({type:"Venda",player:p.name,value:offer,season:game.season});addNews(`${c.name} vendeu ${p.name} por ${fmtMoney(offer)}.`);autoLineup();saveGame();renderTransfers($("#screen"));
+}
+
 function renderFinance(s){
  const c=club(),salary=c.players.reduce((a,p)=>a+p.salary,0);
  s.innerHTML=nav()+`<div class="section-title"><div><h2>💰 Finanças</h2><p class="muted">Controle o caixa da temporada.</p></div></div><div class="grid grid-3">

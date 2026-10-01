@@ -41,9 +41,11 @@ function pick(a){return a[Math.floor(Math.random()*a.length)]}
 function makeName(){return pick(FIRST_NAMES)+" "+pick(LAST_NAMES)}
 function createPlayer(overall, position, age=rand(18,32)){
  const potential=Math.max(overall+rand(3,18),overall);
+ const ageFactor=age<21?1.45:age<25?1.30:age<29?1.05:age<32?.82:.62;
+ const potentialFactor=1+Math.max(0,potential-overall)*0.035;
+ const value=Math.max(450000,Math.round(Math.pow(overall,3)*35*ageFactor*potentialFactor));
  return {id:makeId("p"),name:makeName(),age,nation:pick(COUNTRIES),position,overall,potential,
- value:Math.max(250000,Math.round((overall*overall*850)*(age<24?1.35:age>30?.7:1))),
- salary:Math.round(overall*850+rand(200,1300)),energy:100,morale:rand(70,90),form:rand(65,90),contract:rand(1,4),number:0,goals:0,assists:0,apps:0,yellow:0,red:0,injury:0};
+ value,salary:Math.round(Math.pow(overall,2)*6.2+rand(500,2200)),energy:100,morale:rand(70,90),form:rand(65,90),contract:rand(1,4),number:0,goals:0,assists:0,apps:0,yellow:0,red:0,injury:0};
 }
 function createClub(seed,i){
  const [name,country,league,division,money,strength,stadium,fans]=seed;
